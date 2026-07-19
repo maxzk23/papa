@@ -107,21 +107,49 @@ export default function Home() {
     // Start shutter animation shortly after mount
     const startTimer = setTimeout(() => {
       setShutterOpen(true);
-    }, 150);
+    }, 100);
 
     // Remove shutter overlay from DOM once animation is fully complete
+    // ลดจาก 2200ms → 1200ms ให้เข้าเว็บได้เร็วขึ้น
     const endTimer = setTimeout(() => {
       setShutterVisible(false);
-    }, 2200);
+    }, 1200);
 
     const checkMobile = () => {
       setIsMobile(window.innerWidth < 1024);
     };
     checkMobile();
 
-    const checkScroll = () => {
-      setIsScrolled(window.scrollY > 50);
+    // Cache layout offsets to prevent layout thrashing (forced reflow)
+    const layout = {
+      containerTop: 0,
+      containerHeight: 0,
+      section4Top: 0,
+      section4Height: 0,
+      section5Top: 0,
+      section5Height: 0,
     };
+
+    const updateLayoutCache = () => {
+      const scrollY = window.scrollY;
+      if (containerRef.current) {
+        layout.containerTop = containerRef.current.getBoundingClientRect().top + scrollY;
+        layout.containerHeight = containerRef.current.offsetHeight;
+      }
+      if (section4Ref.current) {
+        layout.section4Top = section4Ref.current.getBoundingClientRect().top + scrollY;
+        layout.section4Height = section4Ref.current.offsetHeight;
+      }
+      if (section5Ref.current) {
+        layout.section5Top = section5Ref.current.getBoundingClientRect().top + scrollY;
+        layout.section5Height = section5Ref.current.offsetHeight;
+      }
+    };
+
+    // Calculate initial layout offsets
+    updateLayoutCache();
+    // Re-calculate after 1 second to let any dynamic images finish loading/sizing
+    const cacheTimer = setTimeout(updateLayoutCache, 1000);
 
     const updateVideoStyles = (progress: number) => {
       const mobile = window.innerWidth < 1024;
@@ -131,7 +159,7 @@ export default function Home() {
       // 1. Interpolations for left description text
       if (leftTextRef.current) {
         leftTextRef.current.style.opacity = (1 - p1).toString();
-        leftTextRef.current.style.transform = `translateY(${-p1 * 40}px)`;
+        leftTextRef.current.style.transform = `translate3d(0, ${-p1 * 40}px, 0)`;
       }
 
       // 2. Interpolations for scaling video card
@@ -159,32 +187,39 @@ export default function Home() {
 
       if (videoOverlayTextRef.current) {
         videoOverlayTextRef.current.style.opacity = p2.toString();
-        videoOverlayTextRef.current.style.transform = `translateY(${(1 - p2) * 20}px)`;
+        videoOverlayTextRef.current.style.transform = `translate3d(0, ${(1 - p2) * 20}px, 0)`;
       }
     };
 
-    // Scroll progress handler for full screen video scale
-    const handleScroll = () => {
-      let videoProgress = 0;
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        const scrollTop = -rect.top;
-        const totalScrollable = rect.height - window.innerHeight;
-        if (totalScrollable > 0) {
-          videoProgress = Math.max(0, Math.min(1, scrollTop / totalScrollable));
-          progressRef.current = videoProgress;
-          updateVideoStyles(videoProgress);
-        }
+    const isScrolledRef = { current: false };
+
+    // Unified, optimized scroll handler
+    const handleScrollUpdate = (scrollY: number) => {
+      // 1. Check top scroll boundary
+      const scrolled = scrollY > 50;
+      if (scrolled !== isScrolledRef.current) {
+        isScrolledRef.current = scrolled;
+        setIsScrolled(scrolled);
       }
 
-      // Update dynamic curve divider as Section 4 scrolls in
+      // 2. Video Card scale logic
+      const scrollTop = scrollY - layout.containerTop;
+      const totalScrollable = layout.containerHeight - window.innerHeight;
+      let videoProgress = 0;
+      if (totalScrollable > 0) {
+        videoProgress = Math.max(0, Math.min(1, scrollTop / totalScrollable));
+        progressRef.current = videoProgress;
+        updateVideoStyles(videoProgress);
+      }
+
+      // 3. Update dynamic curve divider as Section 4 scrolls in
       if (section4Ref.current && dividerPath4Ref.current) {
-        const rectDivider4 = section4Ref.current.getBoundingClientRect();
+        const rectDivider4Top = layout.section4Top - scrollY;
         const start = window.innerHeight;
         const end = 0;
         const dividerProgress4 = Math.max(
           0,
-          Math.min(1, (start - rectDivider4.top) / (start - end)),
+          Math.min(1, (start - rectDivider4Top) / (start - end)),
         );
 
         const startY = 120 - 120 * dividerProgress4;
@@ -197,14 +232,14 @@ export default function Home() {
         );
       }
 
-      // Update dynamic curve divider as Section 5 scrolls in
+      // 4. Update dynamic curve divider as Section 5 scrolls in
       if (section5Ref.current && dividerPathRef.current) {
-        const rectDivider = section5Ref.current.getBoundingClientRect();
+        const rectDividerTop = layout.section5Top - scrollY;
         const start = window.innerHeight;
         const end = 0;
         const dividerProgress = Math.max(
           0,
-          Math.min(1, (start - rectDivider.top) / (start - end)),
+          Math.min(1, (start - rectDividerTop) / (start - end)),
         );
 
         const startY = 120 - 120 * dividerProgress;
@@ -217,52 +252,56 @@ export default function Home() {
         );
       }
 
-      // Update horizontal scroll slider in Section 5
-      let isInsideSection5 = false;
+      // 5. Update horizontal scroll slider in Section 5
       if (section5Ref.current && horizontalTrackRef.current) {
-        const rectSlider = section5Ref.current.getBoundingClientRect();
-        const scrollTopSlider = -rectSlider.top;
-        const totalScrollableSlider = rectSlider.height - window.innerHeight;
+        const scrollTopSlider = scrollY - layout.section5Top;
+        const totalScrollableSlider = layout.section5Height - window.innerHeight;
         if (totalScrollableSlider > 0) {
           const horizontalProgress = Math.max(
             0,
             Math.min(1, scrollTopSlider / totalScrollableSlider),
           );
           horizontalTrackRef.current.style.transform = `translate3d(-${horizontalProgress * 300}vw, 0, 0)`;
-
-          if (
-            rectSlider.top <= 50 &&
-            rectSlider.bottom >= window.innerHeight - 50
-          ) {
-            isInsideSection5 = true;
-          }
         }
       }
 
-      // Hide navbar when inside services section (section5 - dark bg)
-      let nextHideNavbar = false;
+      // 6. Hide navbar when inside services section (section5 - dark bg)
       if (section5Ref.current) {
-        const s5Rect = section5Ref.current.getBoundingClientRect();
-        nextHideNavbar = s5Rect.top < window.innerHeight && s5Rect.bottom > 0;
+        const s5Top = layout.section5Top - scrollY;
+        const s5Bottom = s5Top + layout.section5Height;
+        const nextHideNavbar = s5Top < window.innerHeight && s5Bottom > 0;
+        if (nextHideNavbar !== hideNavbarRef.current) {
+          hideNavbarRef.current = nextHideNavbar;
+          setHideNavbar(nextHideNavbar);
+        }
       }
-      if (nextHideNavbar !== hideNavbarRef.current) {
-        hideNavbarRef.current = nextHideNavbar;
-        setHideNavbar(nextHideNavbar);
+    };
+
+    let ticking = false;
+    let pendingScrollY = 0;
+
+    const onScroll = () => {
+      pendingScrollY = window.scrollY;
+      if (!ticking) {
+        requestAnimationFrame(() => {
+          handleScrollUpdate(pendingScrollY);
+          ticking = false;
+        });
+        ticking = true;
       }
     };
 
     const handleResize = () => {
       checkMobile();
-      updateVideoStyles(progressRef.current);
-      handleScroll();
+      updateLayoutCache();
+      onScroll();
     };
 
     window.addEventListener("resize", handleResize);
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    window.addEventListener("scroll", checkScroll, { passive: true });
+    window.addEventListener("scroll", onScroll, { passive: true });
 
     // Initial styles check
-    handleScroll();
+    onScroll();
 
     // Initialize Lenis smooth scroll
     const isMobileDevice = window.innerWidth < 1024;
@@ -276,18 +315,25 @@ export default function Home() {
       touchMultiplier: isMobileDevice ? 5.0 : 1.5,
     });
 
+    let rafId: number;
     const raf = (time: number) => {
       lenis.raf(time);
-      requestAnimationFrame(raf);
+      rafId = requestAnimationFrame(raf);
     };
-    requestAnimationFrame(raf);
+    rafId = requestAnimationFrame(raf);
+
+    // Sync Lenis scroll to our optimized scroll handler
+    lenis.on("scroll", (e) => {
+      handleScrollUpdate(e.scroll);
+    });
 
     return () => {
       clearTimeout(startTimer);
       clearTimeout(endTimer);
+      clearTimeout(cacheTimer);
+      cancelAnimationFrame(rafId);
       window.removeEventListener("resize", handleResize);
-      window.removeEventListener("scroll", checkScroll);
-      window.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("scroll", onScroll);
       lenis.destroy();
     };
   }, []);
@@ -305,14 +351,14 @@ export default function Home() {
               : "pointer-events-auto bg-transparent"
             }`}
         >
-          {Array.from({ length: rowsCount }).map((_, rowIndex) => {
+      {Array.from({ length: rowsCount }).map((_, rowIndex) => {
             const isOddRow = rowIndex % 2 === 0;
             return (
               <div key={rowIndex} className="flex-1 w-full flex">
                 {Array.from({ length: colsCount }).map((_, colIndex) => {
                   const delay = isOddRow
-                    ? (colsCount - 1 - colIndex) * 32
-                    : colIndex * 32;
+                    ? (colsCount - 1 - colIndex) * 20
+                    : colIndex * 20;
 
                   return (
                     <div
@@ -320,7 +366,7 @@ export default function Home() {
                       style={{
                         transitionDelay: `${delay}ms`,
                       }}
-                      className={`flex-1 h-full bg-[#dbe8ff] transition-transform duration-800 ease-in-out ${isOddRow ? "origin-left" : "origin-right"
+                      className={`flex-1 h-full bg-[#dbe8ff] transition-transform duration-500 ease-in-out ${isOddRow ? "origin-left" : "origin-right"
                         } ${shutterOpen ? "scale-x-0" : "scale-x-[101%]"}`}
                     />
                   );
@@ -390,7 +436,10 @@ export default function Home() {
             alt="ช่างประปาด่วน โลโก้"
             width={160}
             height={56}
+            priority
+            loading="eager"
             className="h-14 w-auto object-contain transition-transform duration-500 group-hover:scale-105"
+            style={{ width: "auto", height: "3.5rem" }}
           />
         </a>
 
@@ -763,6 +812,7 @@ export default function Home() {
               height: isMobile ? "45vh" : "62vh",
               borderRadius: isMobile ? "16px" : "28px",
               right: isMobile ? "5vw" : "5vw",
+              willChange: "width, height, right, border-radius",
             }}
             className="absolute top-1/2 -translate-y-1/2 overflow-hidden shadow-2xl z-20"
           >
